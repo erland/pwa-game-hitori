@@ -3,7 +3,7 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 const isCI = process.env.GITHUB_ACTIONS === 'true'
-const base = isCI ? '/@NAME/' : '/'
+const base = isCI ? '/pwa-game-hitori/' : '/'
 
 export default defineConfig({
   base,
