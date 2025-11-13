@@ -4,6 +4,12 @@ import {
   listPuzzles,
   type HitoriPuzzleMeta,
 } from '../game/puzzles/HitoriPuzzleRepository';
+import {
+  loadSettings,
+  saveSettings,
+  type Settings,
+  type ErrorHighlightMode,
+} from '../game/services/settings';
 
 /**
  * Main menu scene with a minimal puzzle selection list.
@@ -15,6 +21,9 @@ export class MenuScene extends BaseMenuScene {
   private puzzleMetas: HitoriPuzzleMeta[] = [];
   private puzzleTexts: Phaser.GameObjects.Text[] = [];
   private selectedIndex = 0;
+
+  private settings!: Settings;
+  private errorHighlightButton?: Phaser.GameObjects.Text;
 
   /** Optional background (e.g., color fill, parallax, logo). */
   protected buildBackground(): void {
@@ -29,6 +38,9 @@ export class MenuScene extends BaseMenuScene {
   protected afterCreate(): void {
     const { width, height } = this.scale;
     const theme = this.getTheme();
+
+    // Load persisted settings (including errorHighlightMode).
+    this.settings = loadSettings();
 
     this.puzzleMetas = listPuzzles();
 
@@ -69,6 +81,32 @@ export class MenuScene extends BaseMenuScene {
     });
 
     this.updateSelectionHighlight();
+
+    // --- Tiny Settings UI: error highlighting mode toggle ------------------
+    const buttonStyle: Phaser.Types.GameObjects.Text.TextStyle = {
+      ...(theme.typography.small as Phaser.Types.GameObjects.Text.TextStyle),
+      backgroundColor: '#333333',
+      padding: { left: 8, right: 8, top: 4, bottom: 4 } as any,
+    };
+
+    this.errorHighlightButton = this.add
+      .text(
+        width * 0.5,
+        height * 0.78,
+        this.getErrorModeLabel(),
+        buttonStyle,
+      )
+      .setOrigin(0.5)
+      .setInteractive({ useHandCursor: true });
+
+    this.errorHighlightButton.setAlpha(0.85);
+    this.errorHighlightButton.on('pointerup', () => this.cycleErrorHighlightMode());
+    this.errorHighlightButton.on('pointerover', () =>
+      this.errorHighlightButton?.setAlpha(1),
+    );
+    this.errorHighlightButton.on('pointerout', () =>
+      this.errorHighlightButton?.setAlpha(0.85),
+    );
 
     // Small instruction hint at the bottom.
     this.add
@@ -125,5 +163,43 @@ export class MenuScene extends BaseMenuScene {
   private startPuzzle(puzzleId: string): void {
     // BasePlayScene default key is "Play" in this project.
     this.scene.start('Play', { puzzleId });
+  }
+
+  // --- Tiny Settings helpers -----------------------------------------------
+
+  private getErrorModeLabel(): string {
+    const mode = this.settings.errorHighlightMode;
+    switch (mode) {
+      case 'off':
+        return 'Errors: Off';
+      case 'on-demand':
+        return 'Errors: On-demand';
+      case 'live':
+        return 'Errors: Live';
+      default:
+        return 'Errors: Live';
+    }
+  }
+
+  private cycleErrorHighlightMode(): void {
+    const current = this.settings.errorHighlightMode;
+
+    const next: ErrorHighlightMode =
+      current === 'off'
+        ? 'on-demand'
+        : current === 'on-demand'
+          ? 'live'
+          : 'off';
+
+    this.settings = {
+      ...this.settings,
+      errorHighlightMode: next,
+    };
+
+    saveSettings(this.settings);
+
+    if (this.errorHighlightButton) {
+      this.errorHighlightButton.setText(this.getErrorModeLabel());
+    }
   }
 }

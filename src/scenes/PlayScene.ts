@@ -10,6 +10,7 @@ import {
   getPuzzleById,
   listPuzzles,
 } from '../game/puzzles/HitoriPuzzleRepository';
+import { loadSettings, type Settings } from '../game/services/settings';
 import {
   createHistory,
   applyAction,
@@ -19,7 +20,7 @@ import {
   canRedo,
   type HistoryState,
 } from '../game/core/UndoRedo';
-import { checkAllRules, type RuleViolation } from '../game/core/HitoriRules';
+import { checkAllRules, checkRowColumnUniqueness, checkNoAdjacentShaded, type RuleViolation } from '../game/core/HitoriRules';
 
 interface PlaySceneData {
   puzzleId?: string;
@@ -34,6 +35,7 @@ type HitoriCellView = {
 
 export class PlayScene extends BasePlayScene {
   private history: HistoryState<HitoriGameState> | null = null;
+  private settings: Settings | null = null;
   private boardRoot!: Phaser.GameObjects.Container;
   private boardFitter?: BoardFitter;
   private cellViews: HitoriCellView[][] = [];
@@ -55,8 +57,16 @@ export class PlayScene extends BasePlayScene {
   private checkButton?: Phaser.GameObjects.Text;
   private resetButton?: Phaser.GameObjects.Text;
 
-  // Error highlighting for last "Check"
+  // Error highlighting (used by both Check and live feedback).
   private errorCells: Set<string> = new Set();
+  
+  /**
+   * Live error highlighting mode, driven by persisted settings.
+   * Defaults to 'live' if settings are unavailable.
+   */
+  private get liveErrorMode(): 'off' | 'on-demand' | 'live' {
+    return this.settings?.errorHighlightMode ?? 'live';
+  }
 
   constructor() {
     // 60 Hz fixed-step with up to 5 catch-up steps per frame.
@@ -70,6 +80,7 @@ export class PlayScene extends BasePlayScene {
 
   /** Scene init – determine active puzzle and create initial state/history. */
   init(data: PlaySceneData): void {
+    this.settings = loadSettings();
     const fromMenuId = data?.puzzleId;
     let effectiveId = fromMenuId;
 
@@ -140,6 +151,8 @@ export class PlayScene extends BasePlayScene {
     // --- HUD / buttons (3.4) ---
     this.createHud();
     this.updateHud();
+    // Initial live error highlighting (if enabled).
+    this.updateLiveErrorHighlights();
     this.refreshAllCells();
   }
 
@@ -248,16 +261,47 @@ export class PlayScene extends BasePlayScene {
     }
   }
 
+  /**
+   * Recompute lightweight error highlights for live feedback.
+   * Only checks row/column duplicates and adjacent shaded cells.
+   */
+  private updateLiveErrorHighlights(): void {
+    const state = this.state;
+    // Always clear previous highlights before recomputing.
+    this.errorCells.clear();
+    if (!state) return;
+
+    if (this.liveErrorMode !== 'live') {
+      return;
+    }
+
+    const rowCol = checkRowColumnUniqueness(state);
+    const adj = checkNoAdjacentShaded(state);
+
+    const violations: RuleViolation[] = [
+      ...rowCol.violations,
+      ...adj.violations,
+    ];
+
+    for (const v of violations) {
+      for (const cell of v.cells) {
+        this.errorCells.add(this.cellKey(cell.row, cell.col));
+      }
+    }
+  }
+
   /** Handle a click/tap on a cell – cycle its state and push into history. */
   private handleCellClick(row: number, col: number): void {
     if (!this.history || !this.state) return;
 
-    // Any change clears previous error highlights.
-    this.errorCells.clear();
+    // Any change resets the status message; error highlights
+    // will be recomputed based on the selected mode.
     this.setStatus('');
 
     const next = cycleCellState(this.state, row, col);
     this.history = applyAction(this.history, next);
+
+    this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
   }
@@ -437,7 +481,7 @@ export class PlayScene extends BasePlayScene {
     const next = undo(this.history);
     if (next === this.history) return;
     this.history = next;
-    this.errorCells.clear();
+    this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
   }
@@ -447,7 +491,7 @@ export class PlayScene extends BasePlayScene {
     const next = redo(this.history);
     if (next === this.history) return;
     this.history = next;
-    this.errorCells.clear();
+    this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
   }
@@ -458,7 +502,7 @@ export class PlayScene extends BasePlayScene {
     const fresh = createInitialState(current.puzzle);
     this.history = createHistory(fresh);
     this.elapsedMs = 0;
-    this.errorCells.clear();
+    this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
     this.setStatus('');
