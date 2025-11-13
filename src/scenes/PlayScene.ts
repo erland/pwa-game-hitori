@@ -11,6 +11,7 @@ import {
   listPuzzles,
 } from '../game/puzzles/HitoriPuzzleRepository';
 import { loadSettings, type Settings } from '../game/services/settings';
+import { markPuzzleCompleted } from '../game/services/ProgressStore';
 import {
   createHistory,
   applyAction,
@@ -45,6 +46,11 @@ export class PlayScene extends BasePlayScene {
   private elapsedMs = 0;
   private t = 0;
 
+  /** Has this puzzle been marked as completed during this run? */
+  private isCompleted = false;
+  /** Overlay container for the completion dialog, if visible. */
+  private completionDialog?: Phaser.GameObjects.Container;
+  
   // HUD elements
   private puzzleInfoText?: Phaser.GameObjects.Text;
   private movesText?: Phaser.GameObjects.Text;
@@ -81,6 +87,11 @@ export class PlayScene extends BasePlayScene {
   /** Scene init – determine active puzzle and create initial state/history. */
   init(data: PlaySceneData): void {
     this.settings = loadSettings();
+    this.isCompleted = false;
+    if (this.completionDialog) {
+      this.completionDialog.destroy(true);
+      this.completionDialog = undefined;
+    }
     const fromMenuId = data?.puzzleId;
     let effectiveId = fromMenuId;
 
@@ -292,6 +303,7 @@ export class PlayScene extends BasePlayScene {
 
   /** Handle a click/tap on a cell – cycle its state and push into history. */
   private handleCellClick(row: number, col: number): void {
+    if (this.isCompleted) return;
     if (!this.history || !this.state) return;
 
     // Any change resets the status message; error highlights
@@ -496,12 +508,174 @@ export class PlayScene extends BasePlayScene {
     this.updateHud();
   }
 
+  /** Called when checkAllRules reports the puzzle as solved. */
+  private onPuzzleSolved(): void {
+    const state = this.state;
+    if (!state) return;
+    if (this.isCompleted) return;
+
+    this.isCompleted = true;
+
+    // Clear any error highlights, then refresh visuals.
+    this.errorCells.clear();
+    this.updateLiveErrorHighlights();
+    this.refreshAllCells();
+
+    const timeSeconds = Math.floor(this.elapsedMs / 1000);
+    const moves = state.moves;
+    // TODO: wire real hint tracking once 4.3 is implemented.
+    const hintsUsed = 0;
+
+    // Persist completion in progress storage.
+    markPuzzleCompleted(state.puzzle.id, {
+      timeSeconds,
+      moves,
+      hintsUsed,
+    });
+
+    // Keep the nice status banner as additional feedback.
+    this.setStatus('✔ Puzzle solved – all rules satisfied!', '#88ff88');
+
+    // Show completion dialog overlay with stats + options.
+    this.showCompletionDialog({ timeSeconds, moves, hintsUsed });
+  }
+
+  private showCompletionDialog(stats: {
+    timeSeconds: number;
+    moves: number;
+    hintsUsed: number;
+  }): void {
+    const { width, height } = this.scale;
+
+    // Clean up any previous dialog.
+    if (this.completionDialog) {
+      this.completionDialog.destroy(true);
+      this.completionDialog = undefined;
+    }
+
+    // Backdrop to dim the world and absorb clicks.
+    const backdrop = this.add
+      .rectangle(0, 0, width, height, 0x000000, 0.6)
+      .setOrigin(0, 0);
+    backdrop.setInteractive({ useHandCursor: false });
+
+    const dialogWidth = Math.min(420, width * 0.9);
+    const dialogHeight = 230;
+
+    const dialogBg = this.add
+      .rectangle(width * 0.5, height * 0.5, dialogWidth, dialogHeight, 0x202030)
+      .setOrigin(0.5)
+      .setStrokeStyle(2, 0xffff88);
+
+    const title = this.add
+      .text(width * 0.5, height * 0.5 - dialogHeight / 2 + 32, 'Puzzle complete!', {
+        fontSize: '24px',
+        color: '#ffff88',
+        align: 'center',
+      })
+      .setOrigin(0.5);
+
+    const statsLines = [
+      `Time: ${stats.timeSeconds}s`,
+      `Moves: ${stats.moves}`,
+      `Hints used: ${stats.hintsUsed}`,
+    ];
+
+    const statsText = this.add
+      .text(
+        width * 0.5,
+        title.y + 20,
+        statsLines.join('\n'),
+        {
+          fontSize: '16px',
+          color: '#ffffff',
+          align: 'center',
+        },
+      )
+      .setOrigin(0.5, 0);
+
+    const buttonY = height * 0.5 + dialogHeight / 2 - 40;
+    const buttonSpacing = 120;
+
+    const menuButton = this.createButton(
+      'Back to menu',
+      width * 0.5 - buttonSpacing * 0.5,
+      buttonY,
+      () => this.handleBackToMenu(),
+    );
+
+    const nextButton = this.createButton(
+      'Next puzzle',
+      width * 0.5 + buttonSpacing * 0.5,
+      buttonY,
+      () => this.handleNextPuzzle(),
+    );
+
+    this.completionDialog = this.add.container(0, 0, [
+      backdrop,
+      dialogBg,
+      title,
+      statsText,
+      menuButton,
+      nextButton,
+    ]);
+  }
+
+  private handleBackToMenu(): void {
+    this.scene.start('MainMenu');
+  }
+
+  private handleNextPuzzle(): void {
+    const nextId = this.findNextPuzzleId();
+    if (!nextId) {
+      this.scene.start('MainMenu');
+      return;
+    }
+    this.scene.start('Play', { puzzleId: nextId });
+  }
+
+  /** Find the next puzzle, preferring same difficulty if possible. */
+  private findNextPuzzleId(): string | null {
+    const state = this.state;
+    if (!state) return null;
+
+    const all = listPuzzles();
+    if (!all.length) return null;
+
+    const currentId = state.puzzle.id;
+    const currentDifficulty = state.puzzle.difficulty;
+    const currentIndex = all.findIndex((p) => p.id === currentId);
+
+    if (currentIndex === -1) {
+      // Fallback: just return the first puzzle.
+      return all[0]?.id ?? null;
+    }
+
+    // First pass: find next with the same difficulty.
+    for (let offset = 1; offset < all.length; offset += 1) {
+      const idx = (currentIndex + offset) % all.length;
+      if (all[idx].difficulty === currentDifficulty) {
+        return all[idx].id;
+      }
+    }
+
+    // Fallback: any next puzzle.
+    const fallbackIdx = (currentIndex + 1) % all.length;
+    return all[fallbackIdx]?.id ?? null;
+  }
+
   private handleReset(): void {
     const current = this.state;
     if (!current) return;
     const fresh = createInitialState(current.puzzle);
     this.history = createHistory(fresh);
     this.elapsedMs = 0;
+    this.isCompleted = false;
+
+    if (this.completionDialog) {
+      this.completionDialog.destroy(true);
+      this.completionDialog = undefined;
+    }
     this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
@@ -515,9 +689,7 @@ export class PlayScene extends BasePlayScene {
     const composite = checkAllRules(state);
 
     if (composite.isSolved) {
-      this.errorCells.clear();
-      this.refreshAllCells();
-      this.setStatus('✔ Puzzle solved – all rules satisfied!', '#88ff88');
+      this.onPuzzleSolved();
       return;
     }
 
@@ -570,7 +742,9 @@ export class PlayScene extends BasePlayScene {
   /** Step your deterministic simulation here (called at fixed Hz). */
   protected tick(dtMs: number): void {
     this.t += dtMs;
-    this.elapsedMs += dtMs;
+    if (!this.isCompleted) {
+      this.elapsedMs += dtMs;
+    }
     this.updateHud();
   }
 
