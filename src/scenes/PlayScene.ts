@@ -1,24 +1,53 @@
 import Phaser from 'phaser';
 import { BasePlayScene } from '@erlandlindmark/pwa-game-2d-framework';
 
-/** Simple demo Play scene using the framework's fixed-step loop. */
+/**
+ * Phase 0 placeholder Play scene.
+ * Uses the framework's fixed-step loop but only shows a minimal label.
+ */
 export class PlayScene extends BasePlayScene {
   private t = 0;
   private label!: Phaser.GameObjects.Text;
 
   constructor() {
-    // Example: 60 Hz fixed-step with up to 5 catch-up steps per frame
+    // 60 Hz fixed-step with up to 5 catch-up steps per frame.
     super({ hz: 60, maxCatchUp: 5 }, 'Play');
   }
 
-  /** Build your world here. */
+  /** Build a minimal placeholder world so we can verify the shell runs. */
   protected buildWorld(): void {
-    // ESC to open pause overlay
-    this.input.keyboard?.on('keydown-ESC', () => this.scene.launch('Pause'));
     const { width, height } = this.scale;
-    this.label = this.add.text(width / 2, height / 2, 'GAME RUNNING…', { color: '#0f0' }).setOrigin(0.5);
-    // For the demo, auto-finish after 3 seconds:
-    this.time.delayedCall(3000, () => this.scene.start('GameOver'));
+
+    // Simple solid background
+    this.add.rectangle(0, 0, width, height, 0x000000).setOrigin(0, 0);
+
+    // Centered label so we see that the scene is active
+    this.label = this.add
+      .text(
+        width / 2,
+        height / 2,
+        'Hitori – Phase 0\nPlaceholder Play scene',
+        {
+          fontSize: '24px',
+          color: '#ffffff',
+          align: 'center',
+        }
+      )
+      .setOrigin(0.5);
+
+    // Optional hint text near the bottom
+    this.add
+      .text(
+        width / 2,
+        height * 0.8,
+        'Use the menu to start puzzles in later phases',
+        {
+          fontSize: '14px',
+          color: '#bbbbbb',
+          align: 'center',
+        }
+      )
+      .setOrigin(0.5);
   }
 
   /** Step your deterministic simulation here (called at fixed Hz). */
@@ -26,8 +55,10 @@ export class PlayScene extends BasePlayScene {
     this.t += dtMs;
   }
 
-  /** Do any per-frame rendering / effects here (called once per RAF frame). */
+  /** Per-frame rendering / effects (called once per RAF frame). */
   protected frame(_deltaMs: number): void {
-    if (this.label) this.label.setAlpha(0.7 + 0.3 * Math.sin(this.t * 0.01));
+    if (this.label) {
+      this.label.setAlpha(0.7 + 0.3 * Math.sin(this.t * 0.01));
+    }
   }
 }

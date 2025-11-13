@@ -4,12 +4,12 @@ import { BaseBootScene, defaultTheme } from '@erlandlindmark/pwa-game-2d-framewo
 export class BootScene extends BaseBootScene {
   /** Optionally tweak the default theme title used by Base* scenes. */
   protected getBootTheme() {
-    return { ...defaultTheme, title: 'Basic Template' };
+    return { ...defaultTheme, title: 'Hitori' };
   }
 
   /** Example UI override: request fullscreen automatically on start. */
   protected getServiceOverrides() {
-    return { ui: { autoFullscreen: false } };
+    return { ui: { autoFullscreen: true } };
   }
 
   /** Preload assets here if your menu/play needs them immediately. */

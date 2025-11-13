@@ -1,0 +1,5 @@
+describe('smoke test', () => {
+  it('Jest is wired up', () => {
+    expect(1 + 1).toBe(2);
+  });
+});
