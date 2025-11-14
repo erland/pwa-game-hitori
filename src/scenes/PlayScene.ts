@@ -21,7 +21,13 @@ import {
   canRedo,
   type HistoryState,
 } from '../game/core/UndoRedo';
-import { checkAllRules, checkRowColumnUniqueness, checkNoAdjacentShaded, type RuleViolation } from '../game/core/HitoriRules';
+import {
+  checkAllRules,
+  checkRowColumnUniqueness,
+  checkNoAdjacentShaded,
+  type RuleViolation,
+} from '../game/core/HitoriRules';
+import { findHint } from '../game/core/HitoriHints';
 
 interface PlaySceneData {
   puzzleId?: string;
@@ -46,6 +52,9 @@ export class PlayScene extends BasePlayScene {
   private elapsedMs = 0;
   private t = 0;
 
+  /** Number of hints used in this run (for HUD + completion stats). */
+  private hintsUsed = 0;
+
   /** Has this puzzle been marked as completed during this run? */
   private isCompleted = false;
   /** Overlay container for the completion dialog, if visible. */
@@ -60,6 +69,7 @@ export class PlayScene extends BasePlayScene {
   // Buttons
   private undoButton?: Phaser.GameObjects.Text;
   private redoButton?: Phaser.GameObjects.Text;
+  private hintButton?: Phaser.GameObjects.Text;
   private checkButton?: Phaser.GameObjects.Text;
   private resetButton?: Phaser.GameObjects.Text;
 
@@ -88,10 +98,12 @@ export class PlayScene extends BasePlayScene {
   init(data: PlaySceneData): void {
     this.settings = loadSettings();
     this.isCompleted = false;
+    this.hintsUsed = 0;
     if (this.completionDialog) {
       this.completionDialog.destroy(true);
       this.completionDialog = undefined;
     }
+
     const fromMenuId = data?.puzzleId;
     let effectiveId = fromMenuId;
 
@@ -379,30 +391,36 @@ export class PlayScene extends BasePlayScene {
       .setOrigin(0.5);
 
     const buttonY = height - 40;
-    const spacing = 90;
+    const spacing = 80;
     const centerX = width * 0.5;
 
     this.undoButton = this.createButton(
       'Undo',
-      centerX - spacing * 1.5,
+      centerX - spacing * 2,
       buttonY,
       () => this.handleUndo(),
     );
     this.redoButton = this.createButton(
       'Redo',
-      centerX - spacing * 0.5,
+      centerX - spacing,
       buttonY,
       () => this.handleRedo(),
     );
+    this.hintButton = this.createButton(
+      'Hint',
+      centerX,
+      buttonY,
+      () => this.handleHint(),
+    );
     this.checkButton = this.createButton(
       'Check',
-      centerX + spacing * 0.5,
+      centerX + spacing,
       buttonY,
       () => this.handleCheck(),
     );
     this.resetButton = this.createButton(
       'Reset',
-      centerX + spacing * 1.5,
+      centerX + spacing * 2,
       buttonY,
       () => this.handleReset(),
     );
@@ -455,7 +473,7 @@ export class PlayScene extends BasePlayScene {
     if (!this.history) return;
     this.setButtonEnabled(this.undoButton, canUndo(this.history));
     this.setButtonEnabled(this.redoButton, canRedo(this.history));
-    // Check / Reset are always enabled
+    // Hint / Check / Reset are always enabled for now.
   }
 
   private updateHud(): void {
@@ -463,7 +481,9 @@ export class PlayScene extends BasePlayScene {
     if (!state) return;
 
     if (this.movesText) {
-      this.movesText.setText(`Moves: ${state.moves}`);
+      this.movesText.setText(
+        `Moves: ${state.moves} · Hints: ${this.hintsUsed}`,
+      );
     }
 
     if (this.timerText) {
@@ -508,6 +528,77 @@ export class PlayScene extends BasePlayScene {
     this.updateHud();
   }
 
+  private handleReset(): void {
+    const current = this.state;
+    if (!current) return;
+    const fresh = createInitialState(current.puzzle);
+    this.history = createHistory(fresh);
+    this.elapsedMs = 0;
+    this.isCompleted = false;
+    this.hintsUsed = 0;
+
+    if (this.completionDialog) {
+      this.completionDialog.destroy(true);
+      this.completionDialog = undefined;
+    }
+    this.updateLiveErrorHighlights();
+    this.refreshAllCells();
+    this.updateHud();
+    this.setStatus('');
+  }
+
+  /** Apply a simple logical hint, if available. */
+  private handleHint(): void {
+    if (this.isCompleted) return;
+    if (!this.history || !this.state) return;
+
+    const state = this.state;
+    const hint = findHint(state);
+    if (!hint) {
+      this.setStatus('No simple hint available right now.', '#ffff88');
+      return;
+    }
+
+    // Start from the current state and cycle the target cell until it reaches
+    // the suggested state (or we tried enough times).
+    let next = state;
+    let attempts = 0;
+
+    const getCellState = () =>
+      next.grid.cells[hint.row][hint.col].state;
+
+    while (
+      getCellState() !== hint.suggestedState &&
+      attempts < 3
+    ) {
+      next = cycleCellState(next, hint.row, hint.col);
+      attempts += 1;
+    }
+
+    // If after cycling we still didn't reach the desired state, bail out.
+    if (getCellState() !== hint.suggestedState) {
+      this.setStatus('Could not apply hint safely.', '#ff8888');
+      return;
+    }
+
+    this.history = applyAction(this.history, next);
+    this.hintsUsed += 1;
+
+    // Hints clear old error highlights; live errors will be recomputed.
+    this.errorCells.clear();
+    this.updateLiveErrorHighlights();
+    this.refreshAllCells();
+    this.updateHud();
+
+    const humanRow = hint.row + 1;
+    const humanCol = hint.col + 1;
+    const msg =
+      hint.reason === 'adjacent-shaded'
+        ? `Hint: adjusted cell (${humanRow}, ${humanCol}) to avoid adjacent shaded cells.`
+        : `Hint: adjusted cell (${humanRow}, ${humanCol}) to help resolve duplicates.`;
+    this.setStatus(msg, '#88ffff');
+  }
+
   /** Called when checkAllRules reports the puzzle as solved. */
   private onPuzzleSolved(): void {
     const state = this.state;
@@ -523,8 +614,7 @@ export class PlayScene extends BasePlayScene {
 
     const timeSeconds = Math.floor(this.elapsedMs / 1000);
     const moves = state.moves;
-    // TODO: wire real hint tracking once 4.3 is implemented.
-    const hintsUsed = 0;
+    const hintsUsed = this.hintsUsed;
 
     // Persist completion in progress storage.
     markPuzzleCompleted(state.puzzle.id, {
@@ -568,11 +658,16 @@ export class PlayScene extends BasePlayScene {
       .setStrokeStyle(2, 0xffff88);
 
     const title = this.add
-      .text(width * 0.5, height * 0.5 - dialogHeight / 2 + 32, 'Puzzle complete!', {
-        fontSize: '24px',
-        color: '#ffff88',
-        align: 'center',
-      })
+      .text(
+        width * 0.5,
+        height * 0.5 - dialogHeight / 2 + 32,
+        'Puzzle complete!',
+        {
+          fontSize: '24px',
+          color: '#ffff88',
+          align: 'center',
+        },
+      )
       .setOrigin(0.5);
 
     const statsLines = [
@@ -662,24 +757,6 @@ export class PlayScene extends BasePlayScene {
     // Fallback: any next puzzle.
     const fallbackIdx = (currentIndex + 1) % all.length;
     return all[fallbackIdx]?.id ?? null;
-  }
-
-  private handleReset(): void {
-    const current = this.state;
-    if (!current) return;
-    const fresh = createInitialState(current.puzzle);
-    this.history = createHistory(fresh);
-    this.elapsedMs = 0;
-    this.isCompleted = false;
-
-    if (this.completionDialog) {
-      this.completionDialog.destroy(true);
-      this.completionDialog = undefined;
-    }
-    this.updateLiveErrorHighlights();
-    this.refreshAllCells();
-    this.updateHud();
-    this.setStatus('');
   }
 
   private handleCheck(): void {
