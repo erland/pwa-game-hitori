@@ -313,6 +313,21 @@ export class PlayScene extends BasePlayScene {
     }
   }
 
+  /**
+   * Auto-check if the puzzle is solved after any state change.
+   * Does *not* show error messages; only triggers completion when solved.
+   */
+  private autoCheckSolved(): void {
+    if (this.isCompleted) return;
+    const state = this.state;
+    if (!state) return;
+
+    const composite = checkAllRules(state);
+    if (composite.isSolved) {
+      this.onPuzzleSolved();
+    }
+  }
+
   /** Handle a click/tap on a cell – cycle its state and push into history. */
   private handleCellClick(row: number, col: number): void {
     if (this.isCompleted) return;
@@ -328,6 +343,7 @@ export class PlayScene extends BasePlayScene {
     this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
+    this.autoCheckSolved();
   }
 
   // --- HUD & buttons -------------------------------------------------------
@@ -516,6 +532,7 @@ export class PlayScene extends BasePlayScene {
     this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
+    this.autoCheckSolved();
   }
 
   private handleRedo(): void {
@@ -526,6 +543,7 @@ export class PlayScene extends BasePlayScene {
     this.updateLiveErrorHighlights();
     this.refreshAllCells();
     this.updateHud();
+    this.autoCheckSolved();
   }
 
   private handleReset(): void {
@@ -597,6 +615,8 @@ export class PlayScene extends BasePlayScene {
         ? `Hint: adjusted cell (${humanRow}, ${humanCol}) to avoid adjacent shaded cells.`
         : `Hint: adjusted cell (${humanRow}, ${humanCol}) to help resolve duplicates.`;
     this.setStatus(msg, '#88ffff');
+
+    this.autoCheckSolved();
   }
 
   /** Called when checkAllRules reports the puzzle as solved. */
