@@ -657,13 +657,11 @@ export class PlayScene extends BasePlayScene {
   }): void {
     const { width, height } = this.scale;
 
-    // Clean up any previous dialog.
     if (this.completionDialog) {
       this.completionDialog.destroy(true);
       this.completionDialog = undefined;
     }
 
-    // Backdrop to dim the world and absorb clicks.
     const backdrop = this.add
       .rectangle(0, 0, width, height, 0x000000, 0.6)
       .setOrigin(0, 0);
@@ -709,20 +707,21 @@ export class PlayScene extends BasePlayScene {
       )
       .setOrigin(0.5, 0);
 
-    const buttonY = height * 0.5 + dialogHeight / 2 - 40;
-    const buttonSpacing = 120;
+    // ⬇️ Updated layout: vertical buttons
+    const buttonYBase = height * 0.5 + dialogHeight / 2 - 70;
+    const buttonGap = 36;
 
     const menuButton = this.createButton(
       'Back to menu',
-      width * 0.5 - buttonSpacing * 0.5,
-      buttonY,
+      width * 0.5,
+      buttonYBase,
       () => this.handleBackToMenu(),
     );
 
     const nextButton = this.createButton(
       'Next puzzle',
-      width * 0.5 + buttonSpacing * 0.5,
-      buttonY,
+      width * 0.5,
+      buttonYBase + buttonGap,
       () => this.handleNextPuzzle(),
     );
 
